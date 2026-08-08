@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oficina-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: oficina-backend
+  template:
+    metadata:
+      labels:
+        app: oficina-backend
+    spec:
+      initContainers:
+        - name: migrate
+          image: oficina-backend:local
+          imagePullPolicy: Never
+          # 👇 Usamos o subshell para garantir que a variável seja expandida antes de chamar o npx
+          command: ['/bin/sh', '-c', '
+            echo "Aguardando banco..." &&
+            while ! nc -z oficina-db 5432; do sleep 2; done;
+            npx prisma migrate deploy --schema prisma/schema.prisma']
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: oficina-secrets
+                  key: DATABASE_URL
+      containers:
+        - name: api
+          image: oficina-backend:local
+          imagePullPolicy: Never
+          # 👇 Não precisamos do echo nem de criar .env aqui
+          command: ['node', 'dist/src/main.js']
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - secretRef:
+                name: oficina-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"

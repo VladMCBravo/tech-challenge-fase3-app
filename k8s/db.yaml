@@ -1,0 +1,38 @@
+# k8s/db.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oficina-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oficina-db
+  template:
+    metadata:
+      labels:
+        app: oficina-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          env:
+            - name: POSTGRES_DB
+              value: oficina_db
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              value: postgres
+          ports:
+            - containerPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oficina-db # Este nome é exatamente o que está no seu DATABASE_URL do secret!
+spec:
+  selector:
+    app: oficina-db
+  ports:
+    - port: 5432
+      targetPort: 5432

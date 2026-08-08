@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: oficina-backend-svc
+spec:
+  type: LoadBalancer # Permite acessar via localhost na sua máquina
+  selector:
+    app: oficina-backend
+  ports:
+    - protocol: TCP
+      port: 80         # Porta exposta para fora
+      targetPort: 3000 # Porta interna da sua aplicação (NestJS)
