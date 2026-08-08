@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { LoggerModule } from 'nestjs-pino'; // Import do módulo de Log
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SharedModule } from './shared/shared.module';
@@ -16,6 +17,15 @@ import { BudgetsModule } from './budgets/budgets.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    LoggerModule.forRoot({
+      pinoHttp: {
+        level: process.env.NODE_ENV !== 'production' ? 'debug' : 'info',
+        transport:
+          process.env.NODE_ENV !== 'production'
+            ? { target: 'pino-pretty' } 
+            : undefined, 
+      },
+    }),
     SharedModule,
     AuthModule,
     CustomersModule,
@@ -28,4 +38,4 @@ import { BudgetsModule } from './budgets/budgets.module';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule {} // ⚠️ A PALAVRA "export" AQUI É O QUE RESOLVE O SEU ERRO!
