@@ -14,13 +14,17 @@ spec:
     spec:
       initContainers:
         - name: migrate
-          image: oficina-backend:local
+          # ANTES: oficina-backend:local  (imagem só existia na sua máquina -> ImagePullBackOff)
+          # AGORA: imagem no Amazon ECR, que o cluster EKS consegue baixar.
+          image: 538889416411.dkr.ecr.us-east-1.amazonaws.com/oficina-backend:latest
           imagePullPolicy: Always
-          # 👇 Usamos o subshell para garantir que a variável seja expandida antes de chamar o npx
-          command: ['/bin/sh', '-c', '
-            echo "Aguardando banco..." &&
-            while ! nc -z oficina-db 5432; do sleep 2; done;
-            npx prisma migrate deploy --schema prisma/schema.prisma']
+          # ANTES tinha: while ! nc -z oficina-db 5432 ... -> "oficina-db" só existe no docker-compose,
+          # no EKS o banco é o RDS, então esse loop travava para sempre.
+          # Como o RDS é gerenciado e já está no ar, rodamos a migration direto.
+          command:
+            - /bin/sh
+            - -c
+            - 'echo "Rodando migrations..." && npx prisma migrate deploy --schema prisma/schema.prisma'
           env:
             - name: DATABASE_URL
               valueFrom:
@@ -29,15 +33,28 @@ spec:
                   key: DATABASE_URL
       containers:
         - name: api
-          image: oficina-backend:local
+          image: 538889416411.dkr.ecr.us-east-1.amazonaws.com/oficina-backend:latest
           imagePullPolicy: Always
-          # 👇 Não precisamos do echo nem de criar .env aqui
           command: ['node', 'dist/src/main.js']
           ports:
             - containerPort: 3000
           envFrom:
             - secretRef:
                 name: oficina-secrets
+          # Healthchecks -> exigidos no item de Observabilidade da Fase 3 (uptime/healthchecks)
+          # Uso tcpSocket (checa a porta 3000 aberta) porque é robusto e não depende de
+          # uma rota específica existir. Se você criar um endpoint /api/health no NestJS,
+          # troque tcpSocket por httpGet { path: /api/health, port: 3000 }.
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 15
           resources:
             requests:
               memory: "128Mi"
