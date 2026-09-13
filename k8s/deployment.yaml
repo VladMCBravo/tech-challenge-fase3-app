@@ -15,7 +15,7 @@ spec:
       initContainers:
         - name: migrate
           image: oficina-backend:local
-          imagePullPolicy: Never
+          imagePullPolicy: Always
           # 👇 Usamos o subshell para garantir que a variável seja expandida antes de chamar o npx
           command: ['/bin/sh', '-c', '
             echo "Aguardando banco..." &&
@@ -30,7 +30,7 @@ spec:
       containers:
         - name: api
           image: oficina-backend:local
-          imagePullPolicy: Never
+          imagePullPolicy: Always
           # 👇 Não precisamos do echo nem de criar .env aqui
           command: ['node', 'dist/src/main.js']
           ports:
