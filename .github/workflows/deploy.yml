@@ -22,7 +22,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Conectar ao cluster EKS
-        run: aws eks update-kubeconfig --region us-east-1 --name oficina-eks-cluster
+        run: aws eks update-kubeconfig --region us-east-1 --name oficina-eks-cluster-v2
 
       - name: Deploy dos arquivos no Kubernetes
         run: |
