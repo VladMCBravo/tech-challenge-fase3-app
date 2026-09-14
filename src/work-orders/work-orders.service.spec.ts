@@ -18,6 +18,10 @@ jest.mock('../generated/prisma/client', () => ({
   },
 }));
 
+jest.mock('../observability/metrics.service', () => ({
+  MetricsService: class MetricsService {},
+}));
+
 import {
   BadRequestException,
   NotFoundException,
@@ -25,6 +29,7 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../shared/prisma/prisma.service';
 import { WorkOrdersService } from './work-orders.service';
+import { MetricsService } from '../observability/metrics.service';
 
 describe('WorkOrdersService', () => {
   let service: WorkOrdersService;
@@ -66,6 +71,16 @@ describe('WorkOrdersService', () => {
     },
   };
 
+  const metricsMock = {
+    workOrderCreated: jest.fn(),
+    workOrderStatusChanged: jest.fn(),
+    workOrderStageDuration: jest.fn(),
+    integrationError: jest.fn(),
+    increment: jest.fn(),
+    gauge: jest.fn(),
+    distribution: jest.fn(),
+  };
+
   beforeEach(async () => {
     jest.resetAllMocks();
 
@@ -75,6 +90,10 @@ describe('WorkOrdersService', () => {
         {
           provide: PrismaService,
           useValue: prismaMock,
+        },
+        {
+          provide: MetricsService,
+          useValue: metricsMock,
         },
       ],
     }).compile();
@@ -552,200 +571,200 @@ describe('WorkOrdersService', () => {
   });
 
   it('deve listar todas as ordens de serviço', async () => {
-  prismaMock.workOrder.findMany.mockResolvedValue([
-    { id: 'wo-1' },
-    { id: 'wo-2' },
-  ]);
+    prismaMock.workOrder.findMany.mockResolvedValue([
+      { id: 'wo-1' },
+      { id: 'wo-2' },
+    ]);
 
-  const result = await service.findAll();
+    const result = await service.findAll();
 
-  expect(result).toHaveLength(2);
-});
-
-it('deve retornar OS por id', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'RECEIVED',
+    expect(result).toHaveLength(2);
   });
 
-  const result = await service.findOne('wo-1');
+  it('deve retornar OS por id', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'RECEIVED',
+    });
 
-  expect(result.id).toBe('wo-1');
-});
+    const result = await service.findOne('wo-1');
 
-it('deve lançar erro ao buscar OS inexistente', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue(null);
-
-  await expect(service.findOne('missing-wo')).rejects.toBeInstanceOf(
-    NotFoundException,
-  );
-});
-
-it('deve rejeitar update de item de serviço quando item não existe', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'RECEIVED',
+    expect(result.id).toBe('wo-1');
   });
 
-  prismaMock.workOrderServiceItem.findFirst.mockResolvedValue(null);
+  it('deve lançar erro ao buscar OS inexistente', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue(null);
 
-  await expect(
-    service.updateServiceItem('wo-1', 'item-missing', {
-      quantity: 2,
-    }),
-  ).rejects.toBeInstanceOf(NotFoundException);
-});
-
-it('deve rejeitar update de item de serviço para serviço inativo', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'RECEIVED',
+    await expect(service.findOne('missing-wo')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
-  prismaMock.workOrderServiceItem.findFirst.mockResolvedValue({
-    id: 'item-1',
-    workOrderId: 'wo-1',
-    serviceId: 'service-1',
-    quantity: 1,
-    description: 'Troca de óleo',
-    service: {
-      id: 'service-1',
-      basePrice: 199.9,
-      estimatedTimeMinutes: 60,
-      isActive: true,
-    },
+  it('deve rejeitar update de item de serviço quando item não existe', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'RECEIVED',
+    });
+
+    prismaMock.workOrderServiceItem.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.updateServiceItem('wo-1', 'item-missing', {
+        quantity: 2,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  prismaMock.service.findUnique.mockResolvedValue({
-    id: 'service-2',
-    basePrice: 250,
-    estimatedTimeMinutes: 90,
-    isActive: false,
+  it('deve rejeitar update de item de serviço para serviço inativo', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'RECEIVED',
+    });
+
+    prismaMock.workOrderServiceItem.findFirst.mockResolvedValue({
+      id: 'item-1',
+      workOrderId: 'wo-1',
+      serviceId: 'service-1',
+      quantity: 1,
+      description: 'Troca de óleo',
+      service: {
+        id: 'service-1',
+        basePrice: 199.9,
+        estimatedTimeMinutes: 60,
+        isActive: true,
+      },
+    });
+
+    prismaMock.service.findUnique.mockResolvedValue({
+      id: 'service-2',
+      basePrice: 250,
+      estimatedTimeMinutes: 90,
+      isActive: false,
+    });
+
+    await expect(
+      service.updateServiceItem('wo-1', 'item-1', {
+        serviceId: 'service-2',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  await expect(
-    service.updateServiceItem('wo-1', 'item-1', {
-      serviceId: 'service-2',
-    }),
-  ).rejects.toBeInstanceOf(BadRequestException);
-});
+  it('deve rejeitar remoção de item de serviço inexistente', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'RECEIVED',
+    });
 
-it('deve rejeitar remoção de item de serviço inexistente', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'RECEIVED',
+    prismaMock.workOrderServiceItem.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.removeServiceItem('wo-1', 'item-missing'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  prismaMock.workOrderServiceItem.findFirst.mockResolvedValue(null);
+  it('deve rejeitar update de item de peça quando item não existe', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'RECEIVED',
+    });
 
-  await expect(
-    service.removeServiceItem('wo-1', 'item-missing'),
-  ).rejects.toBeInstanceOf(NotFoundException);
-});
+    prismaMock.workOrderPartItem.findFirst.mockResolvedValue(null);
 
-it('deve rejeitar update de item de peça quando item não existe', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'RECEIVED',
+    await expect(
+      service.updatePartItem('wo-1', 'part-missing', {
+        plannedQuantity: 3,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  prismaMock.workOrderPartItem.findFirst.mockResolvedValue(null);
+  it('deve rejeitar update de item de peça para item de estoque inativo', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'RECEIVED',
+    });
 
-  await expect(
-    service.updatePartItem('wo-1', 'part-missing', {
-      plannedQuantity: 3,
-    }),
-  ).rejects.toBeInstanceOf(NotFoundException);
-});
+    prismaMock.workOrderPartItem.findFirst.mockResolvedValue({
+      id: 'part-1',
+      workOrderId: 'wo-1',
+      plannedQuantity: 2,
+      inventoryItem: {
+        id: 'inventory-1',
+        itemType: 'SUPPLY',
+        unitPrice: 49.9,
+        isActive: true,
+      },
+    });
 
-it('deve rejeitar update de item de peça para item de estoque inativo', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'RECEIVED',
+    prismaMock.inventoryItem.findUnique.mockResolvedValue({
+      id: 'inventory-2',
+      itemType: 'PART',
+      unitPrice: 80,
+      isActive: false,
+    });
+
+    await expect(
+      service.updatePartItem('wo-1', 'part-1', {
+        inventoryItemId: 'inventory-2',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  prismaMock.workOrderPartItem.findFirst.mockResolvedValue({
-    id: 'part-1',
-    workOrderId: 'wo-1',
-    plannedQuantity: 2,
-    inventoryItem: {
-      id: 'inventory-1',
-      itemType: 'SUPPLY',
-      unitPrice: 49.9,
-      isActive: true,
-    },
+  it('deve rejeitar remoção de item de peça inexistente', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'RECEIVED',
+    });
+
+    prismaMock.workOrderPartItem.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.removePartItem('wo-1', 'part-missing'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  prismaMock.inventoryItem.findUnique.mockResolvedValue({
-    id: 'inventory-2',
-    itemType: 'PART',
-    unitPrice: 80,
-    isActive: false,
+  it('deve rejeitar transição para aguardando aprovação fora de diagnóstico', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'RECEIVED',
+    });
+
+    await expect(
+      service.moveToAwaitingApproval('wo-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  await expect(
-    service.updatePartItem('wo-1', 'part-1', {
-      inventoryItemId: 'inventory-2',
-    }),
-  ).rejects.toBeInstanceOf(BadRequestException);
-});
+  it('deve rejeitar início da execução quando não existe orçamento', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'WAITING_APPROVAL',
+    });
 
-it('deve rejeitar remoção de item de peça inexistente', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'RECEIVED',
+    prismaMock.budget.findUnique.mockResolvedValue(null);
+
+    await expect(service.startExecution('wo-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
-  prismaMock.workOrderPartItem.findFirst.mockResolvedValue(null);
+  it('deve rejeitar finalização fora de execução', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'WAITING_APPROVAL',
+    });
 
-  await expect(
-    service.removePartItem('wo-1', 'part-missing'),
-  ).rejects.toBeInstanceOf(NotFoundException);
-});
-
-it('deve rejeitar transição para aguardando aprovação fora de diagnóstico', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'RECEIVED',
+    await expect(service.finish('wo-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
-  await expect(
-    service.moveToAwaitingApproval('wo-1'),
-  ).rejects.toBeInstanceOf(BadRequestException);
-});
+  it('deve rejeitar entrega fora de finalizada', async () => {
+    prismaMock.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'IN_EXECUTION',
+    });
 
-it('deve rejeitar início da execução quando não existe orçamento', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'WAITING_APPROVAL',
+    await expect(service.deliver('wo-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
-
-  prismaMock.budget.findUnique.mockResolvedValue(null);
-
-  await expect(service.startExecution('wo-1')).rejects.toBeInstanceOf(
-    BadRequestException,
-  );
-});
-
-it('deve rejeitar finalização fora de execução', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'WAITING_APPROVAL',
-  });
-
-  await expect(service.finish('wo-1')).rejects.toBeInstanceOf(
-    BadRequestException,
-  );
-});
-
-it('deve rejeitar entrega fora de finalizada', async () => {
-  prismaMock.workOrder.findUnique.mockResolvedValue({
-    id: 'wo-1',
-    status: 'IN_EXECUTION',
-  });
-
-  await expect(service.deliver('wo-1')).rejects.toBeInstanceOf(
-    BadRequestException,
-  );
-});
 });
