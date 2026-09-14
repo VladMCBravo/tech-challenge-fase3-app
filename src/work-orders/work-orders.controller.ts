@@ -23,6 +23,7 @@ import { QueryWorkOrderStatusUseCase } from './application/use-cases/query-work-
 import { ListWorkOrdersUseCase } from './application/use-cases/list-work-orders.use-case';
 import { ApproveBudgetWebhookUseCase } from './application/use-cases/approve-budget-webhook.use-case';
 import { ApproveBudgetWebhookDto } from './dto/approve-budget-webhook.dto';
+import { MetricsService } from '../observability/metrics.service';
 
 @ApiTags('Work Orders')
 @ApiBearerAuth()
@@ -35,15 +36,18 @@ export class WorkOrdersController {
     private readonly listWorkOrdersUseCase: ListWorkOrdersUseCase,
     private readonly approveBudgetWebhookUseCase: ApproveBudgetWebhookUseCase, // 👈 Injetado aqui
     private readonly workOrdersService: WorkOrdersService,
+    private readonly metrics: MetricsService,
   ) {}
 
   @Post()
   @ApiOperation({ summary: 'Cria uma nova ordem de serviço' })
-  create(@Body() createWorkOrderDto: CreateWorkOrderDto) {
-    // 3. Chamamos o execute() do UseCase no lugar do Service!
-    return this.createWorkOrderUseCase.execute(createWorkOrderDto);
+  async create(@Body() createWorkOrderDto: CreateWorkOrderDto) {
+    const workOrder = await this.createWorkOrderUseCase.execute(createWorkOrderDto);
+    this.metrics.workOrderCreated();                  // 👈 volume de OS
+    this.metrics.workOrderStatusChanged('RECEIVED');  // 👈 opcional
+    return workOrder;
   }
-
+  
   @Get()
   @ApiOperation({ summary: 'Lista todas as OS ativas ordenadas por prioridade' })
   findAll() {

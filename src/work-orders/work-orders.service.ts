@@ -14,10 +14,14 @@ import { CreateWorkOrderServiceItemDto } from './dto/create-work-order-service-i
 import { UpdateWorkOrderPartItemDto } from './dto/update-work-order-part-item.dto';
 import { UpdateWorkOrderServiceItemDto } from './dto/update-work-order-service-item.dto';
 import { onlyDigits } from '../shared/validators/document.validator';
+import { MetricsService } from '../observability/metrics.service';
 
 @Injectable()
 export class WorkOrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly metrics: MetricsService,
+  ) {}
 
   async create(createWorkOrderDto: CreateWorkOrderDto) {
     const customer = await this.prisma.customer.findUnique({
@@ -387,7 +391,7 @@ export class WorkOrdersService {
     });
   }
 
-  async startExecution(id: string) {
+    async startExecution(id: string) {
     const workOrder = await this.ensureWorkOrderExists(id);
 
     if (workOrder.status !== WorkOrderStatus.WAITING_APPROVAL) {
@@ -408,7 +412,7 @@ export class WorkOrdersService {
       );
     }
 
-    return this.prisma.workOrder.update({
+    const updated = await this.prisma.workOrder.update({
       where: { id },
       data: {
         status: WorkOrderStatus.IN_EXECUTION,
@@ -416,6 +420,18 @@ export class WorkOrdersService {
       },
       include: this.defaultInclude(),
     });
+
+    // 👇 métrica: duração da etapa de DIAGNÓSTICO
+    if (workOrder.diagnosisStartedAt) {
+      const segundos =
+        (updated.executionStartedAt!.getTime() -
+          workOrder.diagnosisStartedAt.getTime()) /
+        1000;
+      this.metrics.workOrderStageDuration('diagnostico', segundos);
+    }
+    this.metrics.workOrderStatusChanged('IN_EXECUTION');
+
+    return updated;
   }
 
   async finish(id: string) {
@@ -427,7 +443,7 @@ export class WorkOrdersService {
       );
     }
 
-    return this.prisma.workOrder.update({
+    const updated = await this.prisma.workOrder.update({
       where: { id },
       data: {
         status: WorkOrderStatus.FINISHED,
@@ -435,18 +451,28 @@ export class WorkOrdersService {
       },
       include: this.defaultInclude(),
     });
+
+    // 👇 métrica: duração da etapa de EXECUÇÃO
+    if (workOrder.executionStartedAt) {
+      const segundos =
+        (updated.finishedAt!.getTime() -
+          workOrder.executionStartedAt.getTime()) /
+        1000;
+      this.metrics.workOrderStageDuration('execucao', segundos);
+    }
+    this.metrics.workOrderStatusChanged('FINISHED');
+
+    return updated;
   }
 
   async deliver(id: string) {
     const workOrder = await this.ensureWorkOrderExists(id);
 
     if (workOrder.status !== WorkOrderStatus.FINISHED) {
-      throw new BadRequestException(
-        'Só é possível entregar uma OS finalizada.',
-      );
+      throw new BadRequestException('Só é possível entregar uma OS finalizada.');
     }
 
-    return this.prisma.workOrder.update({
+    const updated = await this.prisma.workOrder.update({
       where: { id },
       data: {
         status: WorkOrderStatus.DELIVERED,
@@ -454,6 +480,16 @@ export class WorkOrdersService {
       },
       include: this.defaultInclude(),
     });
+
+    // 👇 métrica: duração da etapa de FINALIZAÇÃO
+    if (workOrder.finishedAt) {
+      const segundos =
+        (updated.deliveredAt!.getTime() - workOrder.finishedAt.getTime()) / 1000;
+      this.metrics.workOrderStageDuration('finalizacao', segundos);
+    }
+    this.metrics.workOrderStatusChanged('DELIVERED');
+
+    return updated;
   }
 
   private async ensureWorkOrderExists(id: string) {

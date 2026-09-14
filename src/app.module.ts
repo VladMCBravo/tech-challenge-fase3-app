@@ -11,6 +11,8 @@ import { ServicesModule } from './services/services.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { WorkOrdersModule } from './work-orders/work-orders.module';
 import { BudgetsModule } from './budgets/budgets.module';
+import { ObservabilityModule } from './observability/observability.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -34,6 +36,8 @@ import { BudgetsModule } from './budgets/budgets.module';
     InventoryModule,
     WorkOrdersModule,
     BudgetsModule,
+    ObservabilityModule, // registra o MetricsService + interceptor global
+    HealthModule,        // expõe /api/health e /api/health/ready
   ],
   controllers: [AppController],
   providers: [AppService],
