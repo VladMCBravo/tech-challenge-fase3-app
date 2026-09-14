@@ -1,33 +1,84 @@
-# Documentação de Arquitetura — Tech Challenge FIAP Fase 3
+# tech-challenge-fase3-app — Aplicação Principal (API de Ordens de Serviço)
 
-Sistema de Gestão de Oficina Mecânica — arquitetura corporativa em nuvem (AWS).
+API RESTful da oficina mecânica (clientes, veículos, serviços, estoque, ordens de serviço e orçamentos), executada em **Kubernetes (Amazon EKS)**. É o quarto componente da arquitetura da Fase 3.
 
-## Índice
+> Parte do Tech Challenge FIAP – Fase 3. Repositórios relacionados: `tech-challenge-fase3-serverless-auth`, `tech-challenge-fase3-infra-k8s`, `tech-challenge-fase3-infra-db`.
 
-### Diagramas e modelo
-- [01 — Diagrama de Componentes e visão de arquitetura](01-arquitetura-componentes.md)
-- [02 — Diagramas de Sequência (autenticação por CPF e abertura de OS)](02-diagramas-sequencia.md)
-- [03 — Modelo de Dados: ER, relacionamentos e ajustes](03-modelo-dados.md)
+## Propósito
 
-### RFCs (análise e justificativa de decisões)
-- [RFC-001 — Escolha do Provedor de Nuvem (AWS)](rfcs/RFC-001-escolha-nuvem.md)
-- [RFC-002 — Escolha do Banco de Dados (PostgreSQL)](rfcs/RFC-002-escolha-banco.md)
-- [RFC-003 — Estratégia de Autenticação (CPF → Serverless → JWT)](rfcs/RFC-003-estrategia-autenticacao.md)
-- [RFC-004 — Ferramenta de Observabilidade (Datadog)](rfcs/RFC-004-observabilidade.md)
+Expor as APIs de negócio da oficina, com **rotas protegidas por JWT**. O token é emitido pela função serverless de autenticação (repositório `serverless-auth`) a partir do CPF do cliente e aceito por esta aplicação por compartilharem o mesmo `JWT_SECRET`.
 
-### ADRs (decisões arquiteturais permanentes)
-- [ADR-001 — Padrão de Comunicação e API Gateway](adrs/ADR-001-api-gateway-comunicacao.md)
-- [ADR-002 — Estratégia de Escalabilidade (HPA)](adrs/ADR-002-escalabilidade-hpa.md)
-- [ADR-003 — Organização de Logs e Traces](adrs/ADR-003-logs-traces.md)
-- [ADR-004 — Gerenciamento de Estado do Terraform (S3)](adrs/ADR-004-terraform-state-remoto.md)
+## Tecnologias
 
-## Repositórios da solução
+- **Node.js 22** + **NestJS 11** (arquitetura hexagonal)
+- **Prisma 7** (ORM) com driver adapter **PostgreSQL** (`@prisma/adapter-pg`)
+- **Docker** (imagem multi-stage) · **Kubernetes** (Deployment, Service, Secret, HPA)
+- **Observabilidade:** `dd-trace` (Datadog APM) + `nestjs-pino` (logs JSON com `trace_id`)
+- **Swagger** (documentação das APIs)
 
-| Repositório | Responsabilidade |
-|---|---|
-| `tech-challenge-fase3-app` | Aplicação principal (API NestJS no EKS) |
-| `tech-challenge-fase3-serverless-auth` | Autenticação por CPF (AWS Lambda) |
-| `tech-challenge-fase3-infra-k8s` | EKS + API Gateway (Terraform) |
-| `tech-challenge-fase3-infra-db` | RDS PostgreSQL (Terraform) |
+## Pré-requisitos
 
-> Os diagramas estão em **Mermaid** e renderizam automaticamente no GitHub.
+- Node.js 22 e npm
+- Docker e Docker Compose (execução local)
+- `kubectl` e credenciais AWS (deploy no EKS)
+- Um PostgreSQL acessível (local via Docker Compose, ou o RDS em nuvem)
+
+## Execução local
+
+```bash
+# sobe banco + aplicação
+docker compose up --build
+# API em http://localhost:3000/api  · Swagger em http://localhost:3000/docs
+```
+
+Migrações do banco (Prisma):
+
+```bash
+npx prisma migrate deploy --schema prisma/schema.prisma
+```
+
+## Deploy (Kubernetes / EKS)
+
+O deploy é feito pela pipeline, mas pode ser reproduzido manualmente:
+
+```bash
+aws eks update-kubeconfig --region us-east-1 --name oficina-eks-cluster-v2
+kubectl apply -f k8s/secret.yaml
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/hpa.yaml
+kubectl get pods
+```
+
+Os manifestos Kubernetes ficam em `k8s/`. A migração do banco roda em um **initContainer** antes da aplicação subir.
+
+## Pipeline de CI/CD (GitHub Actions — `.github/workflows/deploy.yml`)
+
+Fluxo em dois jobs, disparado no merge para `main` (branch protegida, alterações via Pull Request):
+
+1. **test** — `npm ci`, `prisma generate` e `npm test` (testes automatizados).
+2. **build-and-deploy** — configura credenciais AWS → login no **ECR** → **build e push** da imagem Docker → `kubectl apply` dos manifestos → `kubectl set image` + `rollout status` (deploy no EKS).
+
+Secrets necessários no repositório: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`.
+
+## Arquitetura do componente
+
+```mermaid
+flowchart LR
+    GW[API Gateway] -->|/{proxy+}| SVC[Service LoadBalancer]
+    SVC --> P1[Pod NestJS]
+    SVC --> P2[Pod NestJS]
+    HPA[HPA 2..5 CPU 70%] -. escala .-> P1
+    P1 -->|Prisma| DB[(RDS PostgreSQL)]
+    P1 -. dd-trace/pino .-> DD[Datadog]
+    ECR[(ECR)] --> P1
+```
+
+## Documentação das APIs
+
+- **Swagger UI:** `http://<endpoint>/docs` (endpoint do API Gateway ou do Load Balancer do EKS).
+- Coleção Postman: _<inserir link, se aplicável>_.
+
+## Documentação de arquitetura
+
+Diagramas, RFCs, ADRs e modelo de dados: ver a pasta `docs/` (diagrama de componentes, diagramas de sequência, modelo ER e decisões técnicas).
