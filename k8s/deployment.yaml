@@ -2,6 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: oficina-backend
+  labels:
+    app: oficina-backend
+    tags.datadoghq.com/service: "oficina-mecanica-api"
+    tags.datadoghq.com/env: "production"
 spec:
   replicas: 2
   selector:
@@ -11,16 +15,16 @@ spec:
     metadata:
       labels:
         app: oficina-backend
+        tags.datadoghq.com/service: "oficina-mecanica-api"
+        tags.datadoghq.com/env: "production"
+      annotations:
+        # Coleta de logs do container pelo Datadog Agent (logs estruturados JSON)
+        ad.datadoghq.com/api.logs: '[{"source":"nodejs","service":"oficina-mecanica-api"}]'
     spec:
       initContainers:
         - name: migrate
-          # ANTES: oficina-backend:local  (imagem só existia na sua máquina -> ImagePullBackOff)
-          # AGORA: imagem no Amazon ECR, que o cluster EKS consegue baixar.
           image: 538889416411.dkr.ecr.us-east-1.amazonaws.com/oficina-backend:latest
           imagePullPolicy: Always
-          # ANTES tinha: while ! nc -z oficina-db 5432 ... -> "oficina-db" só existe no docker-compose,
-          # no EKS o banco é o RDS, então esse loop travava para sempre.
-          # Como o RDS é gerenciado e já está no ar, rodamos a migration direto.
           command:
             - /bin/sh
             - -c
@@ -41,20 +45,31 @@ spec:
           envFrom:
             - secretRef:
                 name: oficina-secrets
-          # Healthchecks -> exigidos no item de Observabilidade da Fase 3 (uptime/healthchecks)
-          # Uso tcpSocket (checa a porta 3000 aberta) porque é robusto e não depende de
-          # uma rota específica existir. Se você criar um endpoint /api/health no NestJS,
-          # troque tcpSocket por httpGet { path: /api/health, port: 3000 }.
+          env:
+            # Datadog: aponta o dd-trace (APM + DogStatsD) para o Agent no mesmo nó
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: DD_ENV
+              value: "production"
+            - name: DD_SERVICE
+              value: "oficina-mecanica-api"
+            - name: DD_VERSION
+              value: "1.0.0"
+          # Healthchecks HTTP reais (liveness = app viva; readiness = app + banco)
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 15
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /api/health/ready
               port: 3000
             initialDelaySeconds: 15
             periodSeconds: 10
-          livenessProbe:
-            tcpSocket:
-              port: 3000
-            initialDelaySeconds: 30
-            periodSeconds: 15
           resources:
             requests:
               memory: "128Mi"
